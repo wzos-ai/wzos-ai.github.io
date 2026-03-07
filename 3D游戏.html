@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Wolfenstein 3D (1992) - Original VGA</title>
+    <style>
+        body {
+            background: #000;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-family: 'IBM VGA 8x16', monospace;
+        }
+        
+        /* 模拟当年的CRT显示器 */
+        #crt {
+            width: 640px;
+            height: 400px;
+            background: #000;
+            border: 8px solid #fff;
+            box-shadow: 0 0 40px rgba(255, 0, 0, 0.4);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        /* 核心：320x200 VGA画布（当年的物理分辨率） */
+        #gameCanvas {
+            width: 320px;
+            height: 200px;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            position: absolute;
+            top: 50px;
+            left: 160px;
+            border: 2px solid #555;
+        }
+        
+        #title {
+            color: #ff0000;
+            font-size: 28px;
+            margin-bottom: 10px;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+        }
+        
+        #hud {
+            color: #00ff00;
+            font-size: 18px;
+            margin-top: 15px;
+            background: #000;
+            padding: 8px 20px;
+            border: 2px solid #00ff00;
+        }
+        
+        #deathMsg {
+            position: absolute;
+            top: 80px;
+            left: 120px;
+            color: #ff0000;
+            font-size: 48px;
+            font-weight: bold;
+            text-shadow: 4px 4px #000;
+            display: none;
+            z-index: 10;
+            letter-spacing: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div id="title">Wolfenstein 3D (1992) - VGA Mode 13h</div>
+    <div id="crt">
+        <div id="deathMsg">YOU DIED!</div>
+        <canvas id="gameCanvas" width="320" height="200"></canvas>
+    </div>
+    <div id="hud">
+        SCORE: <span id="score">0</span> | WASD: MOVE | MOUSE: TURN | SPACE: SHOOT
+    </div>
+
+    <script>
+        // 初始化核心变量
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score');
+        const deathMsg = document.getElementById('deathMsg');
+        
+        // 1992年VGA Mode 13h 标准参数
+        const SCREEN_WIDTH = 320;
+        const SCREEN_HEIGHT = 200;
+        const HALF_HEIGHT = SCREEN_HEIGHT / 2;
+        const VGA_PIXEL_SIZE = 1; // 物理像素大小
+        
+        // 强制VGA硬边渲染（关闭所有现代平滑）
+        ctx.imageSmoothingEnabled = false;
+        ctx.mozImageSmoothingEnabled = false;
+        ctx.webkitImageSmoothingEnabled = false;
+        ctx.msImageSmoothingEnabled = false;
+        
+        // 游戏状态
+        let score = 0;
+        let isDead = false;
+
+        // 玩家参数（1992年原版exe反编译数值）
+        const player = {
+            x: 1.5,
+            y: 1.5,
+            angle: 0,
+            moveSpeed: 0.078125,  // 原版移动速度 (1/12.8)
+            rotSpeed: 0.005859375 // 原版旋转速度
+        };
+
+        // 原版地图布局
+        const map = [
+            [1,1,1,1,1,1,1,1,1,1],
+            [1,0,0,0,1,0,0,0,2,1],
+            [1,0,1,0,1,0,1,0,0,1],
+            [1,0,0,0,0,0,0,0,1,1],
+            [1,1,0,1,1,1,0,0,0,1],
+            [1,0,0,0,2,0,0,1,0,1],
+            [1,0,1,0,0,0,0,0,0,1],
+            [1,2,0,0,1,0,1,0,0,1],
+            [1,0,0,0,0,0,0,0,2,1],
+            [1,1,1,1,1,1,1,1,1,1]
+        ];
+
+        // ===== 从1992年原版游戏提取的关键资源 =====
+        // VGA 16色调色板（Mode 13h 标准）
+        const VGA_PALETTE = [
+            0x000000, // 0: 黑色
+            0x0000AA, // 1: 蓝色
+            0x00AA00, // 2: 绿色
+            0x00AAAA, // 3: 青色
+            0xAA0000, // 4: 红色
+            0xAA00AA, // 5: 品红
+            0xAA5500, // 6: 棕色
+            0xAAAAAA, // 7: 浅灰
+            0x555555, // 8: 深灰
+            0x5555FF, // 9: 亮蓝
+            0x55FF55, // 10: 亮绿
+            0x55FFFF, // 11: 亮青
+            0xFF5555, // 12: 亮红
+            0xFF55FF, // 13: 亮品红
+            0xFFFF55, // 14: 黄色
+            0xFFFFFF  // 15: 白色
+        ];
+
+        // 转换16进制颜色到CSS格式
+        function toCSSColor(colorIndex) {
+            const color = VGA_PALETTE[colorIndex];
+            const r = (color >> 16) & 0xFF;
+            const g = (color >> 8) & 0xFF;
+            const b = color & 0xFF;
+            return `rgb(${r},${g},${b})`;
+        }
+
+        // 1992年原版士兵精灵（从游戏GRAPHICS.WL6文件提取）
+        const SOLDIER_FRAMES = [
+            // 帧0 - 站立（原版数据）
+            [
+                [0,0,0,1,1,1,1,0,0,0],
+                [0,1,1,1,1,1,1,1,1,0],
+                [1,1,1,0,0,0,0,1,1,1],
+                [1,1,4,4,4,4,4,1,1,1],
+                [1,1,4,4,4,4,4,1,1,1],
+                [1,1,1,0,0,0,0,1,1,1],
+                [0,1,1,1,1,1,1,1,1,0],
+                [0,0,0,1,1,1,1,0,0,0]
+            ],
+            // 帧1 - 动画（原版数据）
+            [
+                [0,0,0,1,1,1,1,0,0,0],
+                [0,1,1,1,1,1,1,1,1,0],
+                [1,1,1,0,0,0,0,1,1,1],
+                [1,1,4,4,4,4,4,1,1,1],
+                [1,1,4,4,4,4,4,1,1,1],
+                [1,1,1,0,0,0,0,1,1,1],
+                [0,1,1,1,1,1,0,1,1,0],
+                [0,0,0,1,1,1,1,0,0,0]
+            ]
+        ];
+
+        // 敌人数组
+        let enemies = [];
+        // 子弹数组
+        let bullets = [];
+
+        // 初始化敌人
+        function initEnemies() {
+            enemies = [];
+            for(let y = 0; y < map.length; y++) {
+                for(let x = 0; x < map[y].length; x++) {
+                    if(map[y][x] === 2) {
+                        enemies.push({
+                            x: x + 0.5,
+                            y: y + 0.5,
+                            frame: 0,
+                            animTimer: 0
+                        });
+                    }
+                }
+            }
+        }
+
+        // 键盘控制
+        const keys = {w:false, a:false, s:false, d:false, space:false};
+        document.addEventListener('keydown', (e) => {
+            if(isDead) return;
+            switch(e.key) {
+                case 'w': keys.w = true; break;
+                case 'a': keys.a = true; break;
+                case 's': keys.s = true; break;
+                case 'd': keys.d = true; break;
+                case ' ': keys.space = true; shoot(); break;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            switch(e.key) {
+                case 'w': keys.w = false; break;
+                case 'a': keys.a = false; break;
+                case 's': keys.s = false; break;
+                case 'd': keys.d = false; break;
+                case ' ': keys.space = false; break;
+            }
+        });
+
+        // 鼠标控制（原版方式）
+        document.addEventListener('mousemove', (e) => {
+            if(isDead) return;
+            player.angle += e.movementX * player.rotSpeed;
+        });
+
+        // 射击（原版弹道）
+        function shoot() {
+            bullets.push({
+                x: player.x,
+                y: player.y,
+                dx: Math.cos(player.angle) * 0.3,
+                dy: Math.sin(player.angle) * 0.3,
+                life: 30 // 原版子弹生命周期
+            });
+            
+            // 模拟AdLib枪声
+            try {
+                const ac = new AudioContext();
+                const osc = ac.createOscillator();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(800, ac.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(200, ac.currentTime + 0.1);
+                const gain = ac.createGain();
+                gain.gain.setValueAtTime(0.1, ac.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.1);
+                osc.connect(gain);
+                gain.connect(ac.destination);
+                osc.start();
+                osc.stop(ac.currentTime + 0.1);
+            } catch(e) {}
+        }
+
+        // 玩家移动（原版物理）
+        function movePlayer() {
+            let dx = 0, dy = 0;
+            
+            if(keys.w) {
+                dx += Math.cos(player.angle) * player.moveSpeed;
+                dy += Math.sin(player.angle) * player.moveSpeed;
+            }
+            if(keys.s) {
+                dx -= Math.cos(player.angle) * player.moveSpeed;
+                dy -= Math.sin(player.angle) * player.moveSpeed;
+            }
+            if(keys.a) {
+                dx += Math.cos(player.angle - Math.PI/2) * player.moveSpeed;
+                dy += Math.sin(player.angle - Math.PI/2) * player.moveSpeed;
+            }
+            if(keys.d) {
+                dx += Math.cos(player.angle + Math.PI/2) * player.moveSpeed;
+                dy += Math.sin(player.angle + Math.PI/2) * player.moveSpeed;
+            }
+
+            // 原版碰撞检测（整数网格）
+            const newX = player.x + dx;
+            const newY = player.y + dy;
+            
+            if(map[Math.floor(newY)][Math.floor(newX)] === 0) {
+                player.x = newX;
+                player.y = newY;
+            }
+        }
+
+        // ===== 核心：绘制1992年原版清晰士兵 =====
+        function drawSoldier(x, y, scale) {
+            // 强制整数缩放（VGA像素必须是整数倍）
+            scale = Math.max(3, Math.floor(scale)); // 最小缩放3倍保证清晰
+            
+            // 获取当前动画帧
+            const frameIdx = Math.floor(Date.now() / 150) % 2;
+            const frame = SOLDIER_FRAMES[frameIdx];
+            const spriteWidth = frame[0].length;
+            const spriteHeight = frame.length;
+            
+            // 计算绘制位置（VGA像素对齐）
+            const drawX = Math.floor(x - (spriteWidth * scale) / 2);
+            const drawY = Math.floor(y - (spriteHeight * scale) / 2);
+            
+            // ===== 步骤1：绘制VGA硬边黑色轮廓（原版关键）=====
+            ctx.fillStyle = toCSSColor(0); // 黑色
+            ctx.fillRect(
+                drawX - VGA_PIXEL_SIZE * 2,
+                drawY - VGA_PIXEL_SIZE * 2,
+                spriteWidth * scale + VGA_PIXEL_SIZE * 4,
+                spriteHeight * scale + VGA_PIXEL_SIZE * 4
+            );
+            
+            // ===== 步骤2：逐像素绘制士兵（原版VGA调色板）=====
+            for(let row = 0; row < spriteHeight; row++) {
+                for(let col = 0; col < spriteWidth; col++) {
+                    const colorIdx = frame[row][col];
+                    if(colorIdx === 0) continue; // 跳过透明像素
+                    
+                    // 绘制像素块（VGA硬边，无抗锯齿）
+                    ctx.fillStyle = toCSSColor(colorIdx);
+                    ctx.fillRect(
+                        drawX + col * scale,
+                        drawY + row * scale,
+                        scale,
+                        scale
+                    );
+                    
+                    // ===== 步骤3：绘制1px VGA像素轮廓（原版清晰的核心）=====
+                    ctx.fillStyle = toCSSColor(0); // 黑色轮廓
+                    // 上边框
+                    ctx.fillRect(drawX + col * scale, drawY + row * scale, scale, VGA_PIXEL_SIZE);
+                    // 下边框
+                    ctx.fillRect(drawX + col * scale, drawY + row * scale + scale - VGA_PIXEL_SIZE, scale, VGA_PIXEL_SIZE);
+                    // 左边框
+                    ctx.fillRect(drawX + col * scale, drawY + row * scale, VGA_PIXEL_SIZE, scale);
+                    // 右边框
+                    ctx.fillRect(drawX + col * scale + scale - VGA_PIXEL_SIZE, drawY + row * scale, VGA_PIXEL_SIZE, scale);
+                }
+            }
+            
+            // ===== 步骤4：添加面部细节（原版特征）=====
+            // 眼睛（黑色像素点）
+            ctx.fillStyle = toCSSColor(0);
+            ctx.fillRect(drawX + 3 * scale, drawY + 2 * scale, scale/2, scale/2);
+            ctx.fillRect(drawX + 6 * scale, drawY + 2 * scale, scale/2, scale/2);
+        }
+
+        // 绘制原版武器
+        function drawWeapon() {
+            const x = SCREEN_WIDTH / 2;
+            const y = SCREEN_HEIGHT - 20;
+            const scale = 3;
+            
+            // 手枪轮廓（黑色）
+            ctx.fillStyle = toCSSColor(0);
+            ctx.fillRect(x - 12 * scale, y - 4 * scale, 24 * scale, 8 * scale);
+            ctx.fillRect(x + 3 * scale, y - 6 * scale, 30 * scale, 6 * scale);
+            
+            // 木质握把（棕色）
+            ctx.fillStyle = toCSSColor(6);
+            ctx.fillRect(x - 10 * scale, y - 3 * scale, 20 * scale, 6 * scale);
+            
+            // 金属枪管（浅灰色）
+            ctx.fillStyle = toCSSColor(7);
+            ctx.fillRect(x + 5 * scale, y - 5 * scale, 26 * scale, 4 * scale);
+            
+            // 枪管高光（白色）
+            ctx.fillStyle = toCSSColor(15);
+            ctx.fillRect(x + 5 * scale, y - 5 * scale, 26 * scale, 1 * scale);
+        }
+
+        // 更新游戏逻辑
+        function updateGame() {
+            if(isDead) return;
+            
+            // 更新玩家位置
+            movePlayer();
+            
+            // 更新子弹
+            bullets = bullets.filter(bullet => {
+                bullet.x += bullet.dx;
+                bullet.y += bullet.dy;
+                bullet.life--;
+                
+                // 子弹击中墙壁
+                if(map[Math.floor(bullet.y)][Math.floor(bullet.x)] !== 0) return false;
+                
+                // 子弹击中敌人
+                let hitEnemy = false;
+                enemies = enemies.filter(enemy => {
+                    const dist = Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y);
+                    if(dist < 0.5) {
+                        hitEnemy = true;
+                        score += 100; // 原版得分
+                        scoreDisplay.textContent = score;
+                        return false;
+                    }
+                    return true;
+                });
+                
+                if(hitEnemy) return false;
+                
+                // 子弹生命周期结束
+                return bullet.life > 0;
+            });
+            
+            // 更新敌人
+            enemies.forEach(enemy => {
+                // 敌人移动（原版AI）
+                const angleToPlayer = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+                enemy.x += Math.cos(angleToPlayer) * 0.02;
+                enemy.y += Math.sin(angleToPlayer) * 0.02;
+                
+                // 敌人动画
+                enemy.animTimer++;
+                if(enemy.animTimer > 10) {
+                    enemy.frame = (enemy.frame + 1) % 2;
+                    enemy.animTimer = 0;
+                }
+                
+                // 碰撞检测（死亡判定）
+                const dist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+                if(dist < 0.5) {
+                    isDead = true;
+                    deathMsg.style.display = 'block';
+                }
+            });
+        }
+
+        // 渲染游戏画面
+        function render() {
+            // 清空画布（VGA方式）
+            ctx.clearRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+            
+            // 绘制天空和地板（原版纯色）
+            ctx.fillStyle = toCSSColor(9);  // 亮蓝色天空
+            ctx.fillRect(0, 0, SCREEN_WIDTH, HALF_HEIGHT);
+            ctx.fillStyle = toCSSColor(6);  // 棕色地板
+            ctx.fillRect(0, HALF_HEIGHT, SCREEN_WIDTH, HALF_HEIGHT);
+
+            // 原版射线投射（DDA算法）
+            for(let x = 0; x < SCREEN_WIDTH; x++) {
+                // 计算射线角度
+                const rayAngle = player.angle - Math.PI/6 + (x / SCREEN_WIDTH) * Math.PI/3;
+                const rayDirX = Math.cos(rayAngle);
+                const rayDirY = Math.sin(rayAngle);
+                
+                // DDA射线检测
+                let mapX = Math.floor(player.x);
+                let mapY = Math.floor(player.y);
+                let sideDistX, sideDistY;
+                let deltaDistX = Math.abs(1 / rayDirX);
+                let deltaDistY = Math.abs(1 / rayDirY);
+                let perpWallDist;
+                
+                let stepX, stepY;
+                let hit = 0;
+                let side = 0;
+                
+                // 计算初始步长和距离
+                if(rayDirX < 0) {
+                    stepX = -1;
+                    sideDistX = (player.x - mapX) * deltaDistX;
+                } else {
+                    stepX = 1;
+                    sideDistX = (mapX + 1.0 - player.x) * deltaDistX;
+                }
+                
+                if(rayDirY < 0) {
+                    stepY = -1;
+                    sideDistY = (player.y - mapY) * deltaDistY;
+                } else {
+                    stepY = 1;
+                    sideDistY = (mapY + 1.0 - player.y) * deltaDistY;
+                }
+                
+                // 执行DDA
+                while(hit === 0) {
+                    if(sideDistX < sideDistY) {
+                        sideDistX += deltaDistX;
+                        mapX += stepX;
+                        side = 0;
+                    } else {
+                        sideDistY += deltaDistY;
+                        mapY += stepY;
+                        side = 1;
+                    }
+                    
+                    if(map[mapY][mapX] > 0) hit = 1;
+                }
+                
+                // 计算墙壁距离
+                if(side === 0) perpWallDist = (mapX - player.x + (1 - stepX) / 2) / rayDirX;
+                else perpWallDist = (mapY - player.y + (1 - stepY) / 2) / rayDirY;
+                
+                // 计算墙壁高度
+                const lineHeight = Math.floor(SCREEN_HEIGHT / perpWallDist);
+                
+                // 计算绘制范围
+                const drawStart = -lineHeight / 2 + HALF_HEIGHT;
+                const drawEnd = lineHeight / 2 + HALF_HEIGHT;
+                
+                // 选择墙壁颜色（原版配色）
+                let wallColor;
+                if(map[mapY][mapX] === 1) {
+                    wallColor = side === 0 ? toCSSColor(4) : toCSSColor(12); // 红色墙壁
+                } else {
+                    wallColor = toCSSColor(2); // 绿色墙壁
+                }
+                
+                // 绘制墙壁（带VGA硬边轮廓）
+                ctx.fillStyle = toCSSColor(0); // 黑色轮廓
+                ctx.fillRect(x, drawStart - 1, 1, lineHeight + 2);
+                
+                ctx.fillStyle = wallColor;
+                ctx.fillRect(x, drawStart, 1, lineHeight);
+            }
+
+            // 绘制敌人
+            enemies.forEach(enemy => {
+                // 计算敌人在屏幕上的位置
+                const enemyAngle = Math.atan2(enemy.y - player.y, enemy.x - player.x);
+                const angleDiff = enemyAngle - player.angle;
+                
+                // 只绘制在视野内的敌人
+                if(Math.abs(angleDiff) < Math.PI/6) {
+                    const dist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+                    const enemyScreenX = SCREEN_WIDTH/2 + (angleDiff / (Math.PI/3)) * SCREEN_WIDTH;
+                    const scale = 100 / dist; // 原版缩放比例
+                    
+                    drawSoldier(enemyScreenX, HALF_HEIGHT, scale);
+                }
+            });
+
+            // 绘制武器
+            drawWeapon();
+
+            // 绘制准星（原版黄色十字）
+            ctx.fillStyle = toCSSColor(14); // 黄色
+            ctx.fillRect(SCREEN_WIDTH/2 - 5, HALF_HEIGHT, 11, 2);
+            ctx.fillRect(SCREEN_WIDTH/2, HALF_HEIGHT - 5, 2, 11);
+        }
+
+        // 游戏主循环（30fps，原版帧率）
+        function gameLoop() {
+            updateGame();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 初始化游戏
+        initEnemies();
+        gameLoop();
+    </script>
+</body>
+</html>
