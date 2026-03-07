@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Retro Shooter - 1990s Arcade Style</title>
+    <style>
+        * { margin: 0; padding: 0; }
+        body { 
+            background: #000; 
+            color: #fff; 
+            font-family: "MS-DOS", monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        /* 模拟90年代街机屏幕 */
+        #arcade-cabinet {
+            width: 640px;
+            height: 480px;
+            background: #222;
+            border: 10px solid #8B4513;
+            border-radius: 10px;
+            box-shadow: 0 0 40px rgba(255, 215, 0, 0.3);
+            position: relative;
+        }
+        /* 320x240原生分辨率（90年代街机标准） */
+        #game-canvas {
+            width: 320px;
+            height: 240px;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            position: absolute;
+            top: 40px;
+            left: 160px;
+            background: #000020;
+        }
+        #title {
+            font-size: 32px;
+            margin-bottom: 15px;
+            color: #FFD700;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+        }
+        #hud {
+            font-size: 20px;
+            margin-top: 20px;
+            color: #00FF00;
+            background: #000;
+            padding: 10px 25px;
+            border: 2px solid #00FF00;
+            border-radius: 5px;
+        }
+        #game-over {
+            position: absolute;
+            top: 80px;
+            left: 180px;
+            color: #FF0000;
+            font-size: 48px;
+            font-weight: bold;
+            text-shadow: 4px 4px #000;
+            display: none;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div id="title">RETRO SHOOTER 1995</div>
+    <div id="arcade-cabinet">
+        <div id="game-over">GAME OVER</div>
+        <canvas id="game-canvas" width="320" height="240"></canvas>
+    </div>
+    <div id="hud">
+        SCORE: <span id="score">0</span> | LIVES: <span id="lives">3</span> | ARROWS: MOVE | SPACE: SHOOT
+    </div>
+
+    <script>
+        // 初始化核心变量
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score');
+        const livesDisplay = document.getElementById('lives');
+        const gameOverScreen = document.getElementById('game-over');
+        
+        // 90年代街机标准参数
+        const SCREEN_WIDTH = 320;
+        const SCREEN_HEIGHT = 240;
+        const PIXEL_SIZE = 1; // 物理像素大小
+        
+        // 强制像素硬边渲染
+        ctx.imageSmoothingEnabled = false;
+        ctx.mozImageSmoothingEnabled = false;
+        ctx.webkitImageSmoothingEnabled = false;
+
+        // 游戏状态
+        let score = 0;
+        let lives = 3;
+        let gameOver = false;
+        let lastTime = 0;
+        
+        // ===== 90年代街机调色板 =====
+        const PALETTE = {
+            BLACK: '#000000',
+            BLUE: '#0000FF',
+            GREEN: '#00FF00',
+            RED: '#FF0000',
+            YELLOW: '#FFFF00',
+            WHITE: '#FFFFFF',
+            CYAN: '#00FFFF',
+            MAGENTA: '#FF00FF',
+            ORANGE: '#FF8000',
+            PURPLE: '#800080',
+            GREY: '#808080',
+            PLAYER: '#00FFFF', // 玩家飞机颜色
+            ENEMY1: '#FF0000',  // 敌人1颜色
+            ENEMY2: '#FFFF00',  // 敌人2颜色
+            BULLET: '#FFFFFF',  // 子弹颜色
+            BG_STAR: '#FFFFFF'  // 背景星星颜色
+        };
+
+        // ===== 玩家飞机（90年代像素风格）=====
+        const player = {
+            x: SCREEN_WIDTH / 2,
+            y: SCREEN_HEIGHT - 40,
+            width: 16,
+            height: 16,
+            speed: 3,
+            fireRate: 150, // 射击间隔（毫秒）
+            lastShot: 0,
+            invulnerable: false,
+            invulnerableTimer: 0
+        };
+
+        // ===== 像素飞机精灵（90年代风格）=====
+        // 玩家飞机像素矩阵（16x16）
+        const PLAYER_SPRITE = [
+            "    ████    ",
+            "   ██████   ",
+            "  ██░░██  ██",
+            " ██░░░░█████",
+            "██░░░░░░████",
+            "██░░░░░░████",
+            " ██░░░░█████",
+            "  ██░░██  ██",
+            "   ██████   ",
+            "    ████    ",
+            "   ██  ██   ",
+            "  ██    ██  ",
+            " ██      ██ ",
+            "██        ██",
+            "█          █",
+            "            "
+        ];
+
+        // 敌人1像素矩阵（12x12）
+        const ENEMY1_SPRITE = [
+            "   ███   ",
+            "  █████  ",
+            " ██░░░██ ",
+            "██░░░███ ",
+            "█░░░░░██ ",
+            "░░░░░░░█ ",
+            "█░░░░░██ ",
+            "██░░░███ ",
+            " ██░░░██ ",
+            "  █████  ",
+            "   ███   ",
+            "          "
+        ];
+
+        // 敌人2像素矩阵（14x14）
+        const ENEMY2_SPRITE = [
+            "    ███    ",
+            "   █████   ",
+            "  ██░░░██  ",
+            " ██░░░░░██ ",
+            "██░░░░░░░██",
+            "█░░░░░░░░░█",
+            "░░░░░░░░░░░",
+            "█░░░░░░░░░█",
+            "██░░░░░░░██",
+            " ██░░░░░██ ",
+            "  ██░░░██  ",
+            "   █████   ",
+            "    ███    ",
+            "           "
+        ];
+
+        // 游戏对象数组
+        let bullets = [];
+        let enemies = [];
+        let enemyBullets = [];
+        let stars = [];
+        let explosions = [];
+
+        // 键盘控制
+        const keys = {
+            up: false,
+            down: false,
+            left: false,
+            right: false,
+            space: false
+        };
+
+        // 初始化键盘事件
+        document.addEventListener('keydown', (e) => {
+            switch(e.key) {
+                case 'ArrowUp': keys.up = true; break;
+                case 'ArrowDown': keys.down = true; break;
+                case 'ArrowLeft': keys.left = true; break;
+                case 'ArrowRight': keys.right = true; break;
+                case ' ': keys.space = true; break;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            switch(e.key) {
+                case 'ArrowUp': keys.up = false; break;
+                case 'ArrowDown': keys.down = false; break;
+                case 'ArrowLeft': keys.left = false; break;
+                case 'ArrowRight': keys.right = false; break;
+                case ' ': keys.space = false; break;
+            }
+        });
+
+        // ===== 初始化背景星星 =====
+        function initStars() {
+            stars = [];
+            for(let i = 0; i < 50; i++) {
+                stars.push({
+                    x: Math.random() * SCREEN_WIDTH,
+                    y: Math.random() * SCREEN_HEIGHT,
+                    size: Math.random() * 2 + 1,
+                    speed: Math.random() * 2 + 1
+                });
+            }
+        }
+
+        // ===== 绘制像素精灵（90年代硬边风格）=====
+        function drawPixelSprite(x, y, sprite, color, scale = 1) {
+            // 计算精灵中心位置
+            const centerX = Math.floor(x - (sprite[0].length * scale) / 2);
+            const centerY = Math.floor(y - (sprite.length * scale) / 2);
+            
+            // 步骤1：绘制黑色外轮廓（90年代街机特征）
+            ctx.fillStyle = PALETTE.BLACK;
+            ctx.fillRect(
+                centerX - PIXEL_SIZE,
+                centerY - PIXEL_SIZE,
+                sprite[0].length * scale + PIXEL_SIZE * 2,
+                sprite.length * scale + PIXEL_SIZE * 2
+            );
+            
+            // 步骤2：逐像素绘制精灵
+            for(let row = 0; row < sprite.length; row++) {
+                const line = sprite[row];
+                for(let col = 0; col < line.length; col++) {
+                    const pixel = line[col];
+                    if(pixel === '█' || pixel === '░') {
+                        // 绘制主体像素
+                        ctx.fillStyle = color;
+                        ctx.fillRect(
+                            centerX + col * scale,
+                            centerY + row * scale,
+                            scale,
+                            scale
+                        );
+                        
+                        // 步骤3：添加1px内轮廓（保证清晰）
+                        ctx.fillStyle = PALETTE.BLACK;
+                        ctx.fillRect(centerX + col * scale, centerY + row * scale, scale, 1);
+                        ctx.fillRect(centerX + col * scale, centerY + row * scale + scale - 1, scale, 1);
+                        ctx.fillRect(centerX + col * scale, centerY + row * scale, 1, scale);
+                        ctx.fillRect(centerX + col * scale + scale - 1, centerY + row * scale, 1, scale);
+                    }
+                }
+            }
+        }
+
+        // ===== 玩家控制 =====
+        function updatePlayer(deltaTime) {
+            if(gameOver) return;
+            
+            // 移动控制
+            if(keys.up && player.y > player.height/2) {
+                player.y -= player.speed;
+            }
+            if(keys.down && player.y < SCREEN_HEIGHT - player.height/2) {
+                player.y += player.speed;
+            }
+            if(keys.left && player.x > player.width/2) {
+                player.x -= player.speed;
+            }
+            if(keys.right && player.x < SCREEN_WIDTH - player.width/2) {
+                player.x += player.speed;
+            }
+            
+            // 射击控制
+            if(keys.space && Date.now() - player.lastShot > player.fireRate) {
+                // 双发射击（90年代经典设计）
+                bullets.push({
+                    x: player.x - 5,
+                    y: player.y - player.height/2,
+                    width: 2,
+                    height: 6,
+                    speed: -8
+                });
+                bullets.push({
+                    x: player.x + 5,
+                    y: player.y - player.height/2,
+                    width: 2,
+                    height: 6,
+                    speed: -8
+                });
+                
+                player.lastShot = Date.now();
+            }
+            
+            // 无敌状态处理
+            if(player.invulnerable) {
+                player.invulnerableTimer -= deltaTime;
+                if(player.invulnerableTimer <= 0) {
+                    player.invulnerable = false;
+                }
+            }
+        }
+
+        // ===== 生成敌人 =====
+        function spawnEnemies() {
+            if(gameOver || Math.random() > 0.02) return;
+            
+            // 随机生成不同类型的敌人
+            const enemyType = Math.random() > 0.3 ? 1 : 2;
+            const x = Math.random() * (SCREEN_WIDTH - 30) + 15;
+            
+            enemies.push({
+                x: x,
+                y: -20,
+                width: enemyType === 1 ? 12 : 14,
+                height: enemyType === 1 ? 12 : 14,
+                type: enemyType,
+                speed: Math.random() * 2 + 1,
+                fireRate: enemyType === 1 ? 2000 : 1500,
+                lastShot: Date.now() - Math.random() * 1000
+            });
+        }
+
+        // ===== 更新敌人 =====
+        function updateEnemies(deltaTime) {
+            if(gameOver) return;
+            
+            // 生成新敌人
+            spawnEnemies();
+            
+            // 更新现有敌人
+            for(let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                
+                // 移动敌人
+                enemy.y += enemy.speed;
+                
+                // 敌人射击
+                if(Date.now() - enemy.lastShot > enemy.fireRate) {
+                    enemyBullets.push({
+                        x: enemy.x,
+                        y: enemy.y + enemy.height/2,
+                        width: 2,
+                        height: 6,
+                        speed: 5
+                    });
+                    enemy.lastShot = Date.now();
+                }
+                
+                // 移除超出屏幕的敌人
+                if(enemy.y > SCREEN_HEIGHT + enemy.height) {
+                    enemies.splice(i, 1);
+                    continue;
+                }
+                
+                // 碰撞检测（玩家与敌人）
+                if(!player.invulnerable && checkCollision(player, enemy)) {
+                    playerHit();
+                    enemies.splice(i, 1);
+                }
+            }
+        }
+
+        // ===== 更新子弹 =====
+        function updateBullets() {
+            if(gameOver) return;
+            
+            // 更新玩家子弹
+            for(let i = bullets.length - 1; i >= 0; i--) {
+                const bullet = bullets[i];
+                bullet.y += bullet.speed;
+                
+                // 移除超出屏幕的子弹
+                if(bullet.y < -bullet.height) {
+                    bullets.splice(i, 1);
+                    continue;
+                }
+                
+                // 检测子弹击中敌人
+                for(let j = enemies.length - 1; j >= 0; j--) {
+                    const enemy = enemies[j];
+                    if(checkCollision(bullet, enemy)) {
+                        // 添加爆炸效果
+                        addExplosion(enemy.x, enemy.y, enemy.type === 1 ? 'small' : 'large');
+                        
+                        // 增加分数
+                        score += enemy.type === 1 ? 100 : 200;
+                        scoreDisplay.textContent = score;
+                        
+                        // 移除子弹和敌人
+                        bullets.splice(i, 1);
+                        enemies.splice(j, 1);
+                        break;
+                    }
+                }
+            }
+            
+            // 更新敌人子弹
+            for(let i = enemyBullets.length - 1; i >= 0; i--) {
+                const bullet = enemyBullets[i];
+                bullet.y += bullet.speed;
+                
+                // 移除超出屏幕的子弹
+                if(bullet.y > SCREEN_HEIGHT) {
+                    enemyBullets.splice(i, 1);
+                    continue;
+                }
+                
+                // 检测敌人子弹击中玩家
+                if(!player.invulnerable && checkCollision(bullet, player)) {
+                    playerHit();
+                    enemyBullets.splice(i, 1);
+                }
+            }
+        }
+
+        // ===== 碰撞检测 =====
+        function checkCollision(obj1, obj2) {
+            return obj1.x - obj1.width/2 < obj2.x + obj2.width/2 &&
+                   obj1.x + obj1.width/2 > obj2.x - obj2.width/2 &&
+                   obj1.y - obj1.height/2 < obj2.y + obj2.height/2 &&
+                   obj1.y + obj1.height/2 > obj2.y - obj2.height/2;
+        }
+
+        // ===== 玩家被击中 =====
+        function playerHit() {
+            lives--;
+            livesDisplay.textContent = lives;
+            
+            // 添加爆炸效果
+            addExplosion(player.x, player.y, 'player');
+            
+            // 设置无敌状态
+            player.invulnerable = true;
+            player.invulnerableTimer = 2000;
+            
+            // 检查游戏结束
+            if(lives <= 0) {
+                gameOver = true;
+                gameOverScreen.style.display = 'block';
+            }
+        }
+
+        // ===== 添加爆炸效果 =====
+        function addExplosion(x, y, type) {
+            const size = type === 'small' ? 8 : (type === 'large' ? 16 : 20);
+            const frames = type === 'small' ? 4 : (type === 'large' ? 6 : 8);
+            
+            explosions.push({
+                x: x,
+                y: y,
+                size: size,
+                frame: 0,
+                maxFrames: frames,
+                frameTimer: 0
+            });
+        }
+
+        // ===== 更新爆炸效果 =====
+        function updateExplosions(deltaTime) {
+            for(let i = explosions.length - 1; i >= 0; i--) {
+                const explosion = explosions[i];
+                explosion.frameTimer += deltaTime;
+                
+                // 更新爆炸帧
+                if(explosion.frameTimer > 50) {
+                    explosion.frame++;
+                    explosion.frameTimer = 0;
+                    
+                    // 移除播放完毕的爆炸
+                    if(explosion.frame >= explosion.maxFrames) {
+                        explosions.splice(i, 1);
+                    }
+                }
+            }
+        }
+
+        // ===== 更新背景 =====
+        function updateBackground() {
+            // 更新星星位置
+            for(let i = 0; i < stars.length; i++) {
+                const star = stars[i];
+                star.y += star.speed;
+                
+                // 重置星星位置
+                if(star.y > SCREEN_HEIGHT) {
+                    star.y = -star.size;
+                    star.x = Math.random() * SCREEN_WIDTH;
+                }
+            }
+        }
+
+        // ===== 绘制游戏画面 =====
+        function render() {
+            // 清空画布
+            ctx.fillStyle = PALETTE.BLACK;
+            ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+            
+            // 绘制背景星星
+            for(const star of stars) {
+                ctx.fillStyle = PALETTE.BG_STAR;
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+            }
+            
+            // 绘制玩家飞机（无敌状态闪烁效果）
+            if(!player.invulnerable || Math.floor(Date.now() / 100) % 2 === 0) {
+                drawPixelSprite(player.x, player.y, PLAYER_SPRITE, PALETTE.PLAYER, 1);
+            }
+            
+            // 绘制敌人
+            for(const enemy of enemies) {
+                const sprite = enemy.type === 1 ? ENEMY1_SPRITE : ENEMY2_SPRITE;
+                const color = enemy.type === 1 ? PALETTE.ENEMY1 : PALETTE.ENEMY2;
+                drawPixelSprite(enemy.x, enemy.y, sprite, color, 1);
+            }
+            
+            // 绘制玩家子弹
+            ctx.fillStyle = PALETTE.BULLET;
+            for(const bullet of bullets) {
+                ctx.fillRect(bullet.x - bullet.width/2, bullet.y, bullet.width, bullet.height);
+            }
+            
+            // 绘制敌人子弹
+            ctx.fillStyle = PALETTE.RED;
+            for(const bullet of enemyBullets) {
+                ctx.fillRect(bullet.x - bullet.width/2, bullet.y, bullet.width, bullet.height);
+            }
+            
+            // 绘制爆炸效果
+            for(const explosion of explosions) {
+                const currentSize = explosion.size * (1 - explosion.frame / explosion.maxFrames);
+                const colors = [PALETTE.RED, PALETTE.ORANGE, PALETTE.YELLOW, PALETTE.WHITE];
+                const color = colors[Math.min(explosion.frame, colors.length - 1)];
+                
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(explosion.x, explosion.y, currentSize, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // ===== 游戏主循环 =====
+        function gameLoop(timestamp) {
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            // 更新游戏状态
+            updatePlayer(deltaTime);
+            updateEnemies(deltaTime);
+            updateBullets();
+            updateExplosions(deltaTime);
+            updateBackground();
+            
+            // 渲染画面
+            render();
+            
+            // 继续循环
+            requestAnimationFrame(gameLoop);
+        }
+
+        // ===== 初始化游戏 =====
+        function initGame() {
+            initStars();
+            lastTime = performance.now();
+            gameLoop(lastTime);
+        }
+
+        // 启动游戏
+        initGame();
+    </script>
+</body>
+</html>
