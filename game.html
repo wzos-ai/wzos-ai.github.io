@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>简易射击游戏</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: #1a1a1a;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 2px solid #444;
+            background-color: #000;
+        }
+        .score {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        .game-over {
+            font-size: 36px;
+            color: red;
+            display: none;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="score">得分: <span id="score">0</span></div>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div class="game-over" id="gameOver">游戏结束！刷新页面重新开始</div>
+
+    <script>
+        // 1. 获取画布和上下文
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const gameOverElement = document.getElementById('gameOver');
+
+        // 2. 游戏参数
+        let score = 0;
+        let gameOver = false;
+        const playerSpeed = 5;
+        const bulletSpeed = 8;
+        const enemySpeed = 2;
+        const enemySpawnRate = 100; // 生成敌人的帧率间隔
+
+        // 3. 玩家对象
+        const player = {
+            x: canvas.width / 2 - 25,
+            y: canvas.height - 70,
+            width: 50,
+            height: 50,
+            color: '#00ff00'
+        };
+
+        // 4. 子弹和敌人数组
+        let bullets = [];
+        let enemies = [];
+
+        // 5. 键盘控制
+        const keys = {
+            up: false,
+            down: false,
+            left: false,
+            right: false,
+            space: false
+        };
+
+        // 监听键盘按下
+        document.addEventListener('keydown', (e) => {
+            if (gameOver) return;
+            switch(e.key) {
+                case 'ArrowUp': keys.up = true; break;
+                case 'ArrowDown': keys.down = true; break;
+                case 'ArrowLeft': keys.left = true; break;
+                case 'ArrowRight': keys.right = true; break;
+                case ' ': keys.space = true; shootBullet(); break;
+            }
+        });
+
+        // 监听键盘松开
+        document.addEventListener('keyup', (e) => {
+            switch(e.key) {
+                case 'ArrowUp': keys.up = false; break;
+                case 'ArrowDown': keys.down = false; break;
+                case 'ArrowLeft': keys.left = false; break;
+                case 'ArrowRight': keys.right = false; break;
+                case ' ': keys.space = false; break;
+            }
+        });
+
+        // 6. 发射子弹函数
+        function shootBullet() {
+            // 防止连发射击（仅在空格键按下时发射一次）
+            if (!keys.space) return;
+            
+            bullets.push({
+                x: player.x + player.width / 2 - 2,
+                y: player.y,
+                width: 4,
+                height: 15,
+                color: '#ffff00'
+            });
+        }
+
+        // 7. 生成敌人函数
+        function spawnEnemy() {
+            const x = Math.random() * (canvas.width - 40);
+            enemies.push({
+                x: x,
+                y: -40,
+                width: 40,
+                height: 40,
+                color: '#ff0000'
+            });
+        }
+
+        // 8. 碰撞检测函数
+        function checkCollision(rect1, rect2) {
+            return rect1.x < rect2.x + rect2.width &&
+                   rect1.x + rect1.width > rect2.x &&
+                   rect1.y < rect2.y + rect2.height &&
+                   rect1.y + rect1.height > rect2.y;
+        }
+
+        // 9. 更新游戏状态
+        function update() {
+            if (gameOver) return;
+
+            // 移动玩家
+            if (keys.up && player.y > 0) player.y -= playerSpeed;
+            if (keys.down && player.y < canvas.height - player.height) player.y += playerSpeed;
+            if (keys.left && player.x > 0) player.x -= playerSpeed;
+            if (keys.right && player.x < canvas.width - player.width) player.x += playerSpeed;
+
+            // 移动子弹
+            bullets = bullets.filter(bullet => {
+                bullet.y -= bulletSpeed;
+                // 移除超出画布的子弹
+                return bullet.y > 0;
+            });
+
+            // 移动敌人
+            enemies = enemies.filter(enemy => {
+                enemy.y += enemySpeed;
+                // 移除超出画布的敌人
+                return enemy.y < canvas.height;
+            });
+
+            // 检测子弹击中敌人
+            bullets.forEach((bullet, bIndex) => {
+                enemies.forEach((enemy, eIndex) => {
+                    if (checkCollision(bullet, enemy)) {
+                        // 移除击中的子弹和敌人
+                        bullets.splice(bIndex, 1);
+                        enemies.splice(eIndex, 1);
+                        // 加分
+                        score += 10;
+                        scoreElement.textContent = score;
+                    }
+                });
+            });
+
+            // 检测玩家与敌人碰撞（游戏结束）
+            enemies.forEach(enemy => {
+                if (checkCollision(player, enemy)) {
+                    gameOver = true;
+                    gameOverElement.style.display = 'block';
+                }
+            });
+
+            // 随机生成敌人
+            if (Math.floor(Math.random() * enemySpawnRate) === 0) {
+                spawnEnemy();
+            }
+        }
+
+        // 10. 绘制游戏画面
+        function draw() {
+            // 清空画布
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 绘制玩家
+            ctx.fillStyle = player.color;
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+
+            
+            bullets.forEach(bullet => {
+                ctx.fillStyle = bullet.color;
+                ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
+            });
+
+            
+            enemies.forEach(enemy => {
+                ctx.fillStyle = enemy.color;
+                ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+            });
+        }
+
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+       
+        gameLoop();
+    </script>
+</body>
+</html>
