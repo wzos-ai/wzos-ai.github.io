@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>空对地射击游戏</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #1a1a1a;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            color: white;
+        }
+
+        /* 游戏容器 */
+        #game-container {
+            width: 800px;
+            height: 600px;
+            background-color: #2c3e50;
+            border: 3px solid #3498db;
+            position: relative;
+            overflow: hidden;
+            cursor: none; /* 隐藏鼠标 */
+        }
+
+        /* 飞机样式 */
+        #plane {
+            width: 60px;
+            height: 40px;
+            background-color: #e74c3c;
+            position: absolute;
+            top: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-radius: 10px 20px 20px 10px;
+        }
+
+        /* 飞机尾部装饰 */
+        #plane::after {
+            content: '';
+            width: 15px;
+            height: 20px;
+            background-color: #c0392b;
+            position: absolute;
+            left: -15px;
+            top: 10px;
+            border-radius: 5px 0 0 5px;
+        }
+
+        /* 子弹样式 */
+        .bullet {
+            width: 6px;
+            height: 15px;
+            background-color: #f1c40f;
+            position: absolute;
+            border-radius: 3px;
+        }
+
+        /* 敌方目标样式 */
+        .enemy {
+            width: 40px;
+            height: 30px;
+            background-color: #2ecc71;
+            position: absolute;
+            border-radius: 5px;
+        }
+
+        /* 敌方目标装饰 */
+        .enemy::after {
+            content: '';
+            width: 30px;
+            height: 5px;
+            background-color: #27ae60;
+            position: absolute;
+            bottom: -5px;
+            left: 5px;
+        }
+
+        /* 计分板 */
+        #score-board {
+            margin-top: 20px;
+            font-size: 24px;
+            color: #ecf0f1;
+        }
+
+        /* 游戏提示 */
+        #game-tips {
+            margin-top: 10px;
+            font-size: 16px;
+            color: #95a5a6;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="plane"></div>
+    </div>
+    <div id="score-board">得分: <span id="score">0</span></div>
+    <div id="game-tips">操作说明：鼠标移动控制飞机，点击鼠标左键发射子弹</div>
+
+    <script>
+        // 获取游戏元素
+        const gameContainer = document.getElementById('game-container');
+        const plane = document.getElementById('plane');
+        const scoreElement = document.getElementById('score');
+        
+        // 游戏参数
+        let score = 0;
+        const planeSpeed = 5;
+        const bulletSpeed = 8;
+        const enemySpeed = 3;
+        const enemySpawnRate = 1500; // 敌方生成间隔(毫秒)
+
+        // 1. 飞机跟随鼠标移动
+        gameContainer.addEventListener('mousemove', (e) => {
+            // 获取鼠标在游戏容器内的坐标
+            const rect = gameContainer.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            
+            // 限制飞机在容器内移动
+            if (mouseX > 0 && mouseX < rect.width - plane.offsetWidth) {
+                plane.style.left = `${mouseX}px`;
+            }
+        });
+
+        // 2. 发射子弹
+        gameContainer.addEventListener('click', () => {
+            // 创建子弹元素
+            const bullet = document.createElement('div');
+            bullet.classList.add('bullet');
+            
+            // 设置子弹初始位置（飞机中心下方）
+            const planeX = parseInt(plane.style.left) + plane.offsetWidth / 2 - 3;
+            const planeY = parseInt(plane.style.top) + plane.offsetHeight;
+            bullet.style.left = `${planeX}px`;
+            bullet.style.top = `${planeY}px`;
+            
+            // 添加子弹到游戏容器
+            gameContainer.appendChild(bullet);
+            
+            // 子弹下落动画
+            const bulletInterval = setInterval(() => {
+                const currentTop = parseInt(bullet.style.top);
+                // 子弹超出容器则移除
+                if (currentTop > gameContainer.offsetHeight) {
+                    clearInterval(bulletInterval);
+                    bullet.remove();
+                } else {
+                    bullet.style.top = `${currentTop + bulletSpeed}px`;
+                }
+                
+                // 检测子弹与敌方碰撞
+                checkCollision(bullet, bulletInterval);
+            }, 20);
+        });
+
+        // 3. 生成敌方目标
+        function spawnEnemy() {
+            const enemy = document.createElement('div');
+            enemy.classList.add('enemy');
+            
+            // 随机生成敌方初始位置（容器顶部，水平随机）
+            const randomX = Math.random() * (gameContainer.offsetWidth - 40);
+            enemy.style.left = `${randomX}px`;
+            enemy.style.top = '0px';
+            
+            gameContainer.appendChild(enemy);
+            
+            // 敌方下落动画
+            const enemyInterval = setInterval(() => {
+                const currentTop = parseInt(enemy.style.top);
+                // 敌方超出容器则移除
+                if (currentTop > gameContainer.offsetHeight) {
+                    clearInterval(enemyInterval);
+                    enemy.remove();
+                } else {
+                    enemy.style.top = `${currentTop + enemySpeed}px`;
+                }
+            }, 20);
+        }
+
+        // 4. 碰撞检测函数
+        function checkCollision(bullet, bulletInterval) {
+            const bullets = document.querySelectorAll('.bullet');
+            const enemies = document.querySelectorAll('.enemy');
+            
+            bullets.forEach(b => {
+                enemies.forEach(e => {
+                    // 获取元素的边界矩形
+                    const bRect = b.getBoundingClientRect();
+                    const eRect = e.getBoundingClientRect();
+                    
+                    // 检测矩形重叠（碰撞）
+                    if (
+                        bRect.left < eRect.right &&
+                        bRect.right > eRect.left &&
+                        bRect.top < eRect.bottom &&
+                        bRect.bottom > eRect.top
+                    ) {
+                        // 碰撞后移除子弹和敌方
+                        clearInterval(bulletInterval);
+                        b.remove();
+                        e.remove();
+                        
+                        // 增加得分
+                        score += 10;
+                        scoreElement.textContent = score;
+                    }
+                });
+            });
+        }
+
+        // 5. 游戏初始化
+        function initGame() {
+            // 持续生成敌方目标
+            setInterval(spawnEnemy, enemySpawnRate);
+        }
+
+        // 启动游戏
+        initGame();
+    </script>
+</body>
+</html>
